@@ -1,0 +1,84 @@
+#!/bin/bash
+# **********************************************************************
+# 01_update_threats_from_feeds.sh
+# Description:
+#   - Downloads threat intelligence feeds from multiple sources
+#   - Extracts, deduplicates, and merges valid IP addresses
+#   - Updates LuLu’s blocklist JSON and pfctl’s malware_block table
+#   - Uses centralized logging color scheme for readability
+#   - Requires user confirmation before execution
+# **********************************************************************
+
+# Import logging colors
+source "$HOME/SecurityToolkit/_helpers/logging_colors.sh"
+
+# Prompt user to proceed
+read -p "Do you wish to update the threat feed and apply the blocklists? (y/n): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+  echo -e "${ORANGE}[ABORTED] User cancelled threat feed update.${NC}"
+  exit 1
+fi
+
+# Set paths
+BASE_DIR="$HOME/SecurityToolkit/threat_feeds"
+FEEDS_DIR="$BASE_DIR/feeds"
+MERGED_IP_LIST="$BASE_DIR/active_ips.txt"
+MERGED_DOMAIN_LIST="$BASE_DIR/active_domains.txt"
+LOG_FILE="$BASE_DIR/feed_update_$(date +%F_%T).log"
+LULU_BLOCKLIST="$HOME/Library/Application Support/LuLu/lulu_blocklist.json"
+
+# Ensure directories exist
+mkdir -p "$FEEDS_DIR"
+mkdir -p "$(dirname "$LULU_BLOCKLIST")"
+
+echo -e "${BLUE}[INFO] Starting threat feed update at $(date)${NC}" | tee -a "$LOG_FILE"
+
+# Feed sources
+declare -A FEEDS=(
+  ["blocklist_de"]="https://lists.blocklist.de/lists/all.txt"
+  ["firehol"]="https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset"
+  ["malwaredomainlist"]="https://www.malwaredomainlist.com/hostslist/ip.txt"
+)
+
+# Fetch feeds
+for name in "${!FEEDS[@]}"; do
+  url="${FEEDS[$name]}"
+  out_file="$FEEDS_DIR/$name.txt"
+
+  echo -e "${BLUE}[FETCH] Downloading $name from $url...${NC}" | tee -a "$LOG_FILE"
+  if curl -s --fail "$url" -o "$out_file"; then
+    echo -e "${GREEN}[OK] Saved to $out_file${NC}" | tee -a "$LOG_FILE"
+  else
+    echo -e "${RED}[ERROR] Failed to fetch $url${NC}" | tee -a "$LOG_FILE"
+    continue
+  fi
+done
+
+# Extract IPs
+cat "$FEEDS_DIR"/*.txt | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u > "$MERGED_IP_LIST"
+echo -e "${GREEN}[INFO] Total unique IPs: $(wc -l < "$MERGED_IP_LIST")${NC}" | tee -a "$LOG_FILE"
+
+# Placeholder for future domain parsing
+> "$MERGED_DOMAIN_LIST"
+
+# Build LuLu blocklist JSON
+echo -e "${BLUE}[APPLY] Updating LuLu blocklist...${NC}" | tee -a "$LOG_FILE"
+{
+  echo '['
+  awk '{print "  {\"remote\": \""$1"\", \"action\": \"block\"},"}' "$MERGED_IP_LIST" | sed '$ s/,$//'
+  echo ']'
+} > "$LULU_BLOCKLIST"
+
+echo -e "${GREEN}[OK] LuLu blocklist updated: $LULU_BLOCKLIST${NC}" | tee -a "$LOG_FILE"
+
+# Sync with pfctl
+echo -e "${BLUE}[APPLY] Syncing pfctl malware_block table...${NC}" | tee -a "$LOG_FILE"
+if sudo pfctl -t malware_block -T replace -f "$MERGED_IP_LIST"; then
+  echo -e "${GREEN}[OK] pfctl table updated successfully.${NC}" | tee -a "$LOG_FILE"
+else
+  echo -e "${RED}[ERROR] Failed to apply pfctl IP list.${NC}" | tee -a "$LOG_FILE"
+fi
+
+# Final user pause
+read -n 1 -s -r -p $'\nPress any key to continue...'
+echo
