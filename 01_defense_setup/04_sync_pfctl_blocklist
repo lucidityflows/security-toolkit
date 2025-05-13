@@ -1,0 +1,47 @@
+#!/bin/bash
+# **********************************************************************
+# 04_sync_pfctl_blocklist.sh
+# Description:
+#   - Replaces the current pfctl malware_block table with IPs from a merged list
+#   - Ensures idempotent firewall updates for threat defense
+#   - Can be called directly or from automation pipelines
+# **********************************************************************
+
+# Load logging color codes
+source "$HOME/SecurityToolkit/_helpers/logging_colors.sh"
+
+# Ask for confirmation
+read -p "Do you wish to update the pfctl malware_block table now? (y/n): " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+  echo -e "${ORANGE}[ABORTED] User cancelled pfctl sync.${NC}"
+  exit 1
+fi
+
+# Path to IP list
+MERGED_IP_LIST="$HOME/SecurityToolkit/threat_feeds/active_ips.txt"
+
+# Validate file exists
+if [[ ! -f "$MERGED_IP_LIST" ]]; then
+  echo -e "${RED}[ERROR] Merged IP list not found: $MERGED_IP_LIST${NC}"
+  exit 1
+fi
+
+# Ensure pfctl table exists
+echo -e "${BLUE}[INFO] Ensuring pfctl malware_block table is initialized...${NC}"
+sudo pfctl -t malware_block -T show > /dev/null 2>&1 || {
+  echo -e "${BLUE}[INIT] Creating malware_block table...${NC}"
+  echo "table <malware_block> persist" | sudo pfctl -f -
+}
+
+# Sync IPs
+echo -e "${BLUE}[APPLY] Replacing pfctl table with new IP list...${NC}"
+if sudo pfctl -t malware_block -T replace -f "$MERGED_IP_LIST"; then
+  echo -e "${GREEN}[OK] pfctl table updated successfully.${NC}"
+else
+  echo -e "${RED}[ERROR] Failed to apply pfctl IP list.${NC}"
+  exit 1
+fi
+
+# Final pause
+read -n 1 -s -r -p $'\nPress any key to continue...'
+echo
