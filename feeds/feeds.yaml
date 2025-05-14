@@ -1,0 +1,20 @@
+feeds:
+  - name: blocklist_de
+    url: https://threatsource.example.com/blocklist_de.txt
+    type: ip
+    enabled: true
+
+  - name: malware_domain_list
+    url: https://threatsource.example.com/malwaredomains.txt
+    type: domain
+    enabled: true
+
+  - name: spamhaus_drop
+    url: https://www.spamhaus.org/drop/drop.txt
+    type: ip
+    enabled: false
+
+output:
+  merged_ips: feeds/merged_active_ips.txt
+  merged_domains: feeds/merged_domains.txt
+  logs: feeds/logs/feeds_update.log
